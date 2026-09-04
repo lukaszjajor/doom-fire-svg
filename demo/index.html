@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ogień z bufora pikseli — wersja historyczna</title>
+<meta name="description" content="Efekt ognia z DOOM-a liczony w buforze pikseli, z przełącznikiem między algorytmem DOOM-owym a demoscenowym.">
+<style>
+  body{
+    font-family:system-ui,-apple-system,'Segoe UI',sans-serif;
+    color:#0f0f0f; background:#fff; line-height:1.7;
+    margin:0; padding:48px 24px;
+  }
+  main{max-width:560px; margin:0 auto}
+  h1{font-size:28px; font-weight:500; margin:0 0 8px; letter-spacing:-.01em}
+  p{color:#3a3a3a; margin:0 0 28px}
+  a{color:#e05c1a}
+  .wroc{display:block; margin-top:32px; font-size:14px}
+</style>
+</head>
+<body>
+<main>
+
+<h1>Ogień z bufora pikseli</h1>
+<p>
+  Wersja historyczna: siatka prostokątów SVG, których kolory przelicza
+  co klatkę JavaScript. Przełącznik pokazuje różnicę między algorytmem
+  z DOOM-a (kopiowanie z losowym znosem) a demoscenowym (uśrednianie sąsiadów).
+</p>
+
+<!-- ===== POCZĄTEK fragmentu do wklejenia w moduł Code ===== -->
+<div class="fire-demo">
+  <div class="fire-stage">
+    <svg id="fire-svg" viewBox="0 0 320 220" width="320" height="220"
+         preserveAspectRatio="none" role="img"
+         aria-label="Animowany ogień renderowany jako siatka prostokątów SVG">
+    </svg>
+  </div>
+
+  <div class="fire-panel">
+    <div class="fire-row fire-row-tabs">
+      <button type="button" class="fire-tab is-on" data-algo="doom">DOOM · kopiowanie</button>
+      <button type="button" class="fire-tab" data-algo="demo">demoscena · uśrednianie</button>
+    </div>
+
+    <div class="fire-row">
+      <label for="fire-cool">chłodzenie</label>
+      <input type="range" id="fire-cool" min="0" max="12" step="1" value="3">
+      <output id="fire-cool-o">3</output>
+    </div>
+
+    <div class="fire-row">
+      <label for="fire-wind">wiatr</label>
+      <input type="range" id="fire-wind" min="-2" max="2" step="1" value="0">
+      <output id="fire-wind-o">0</output>
+    </div>
+
+    <p class="fire-note" id="fire-note"></p>
+  </div>
+</div>
+
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap');
+
+.fire-demo{
+  --ink:#0f0f0f; --ink-muted:#6b6b6b; --accent:#e05c1a;
+  --surface-2:#f7f6f3; --border:#e2ddd6;
+  --mono:'JetBrains Mono','Fira Mono',monospace;
+  --sans:'DM Sans',system-ui,sans-serif;
+  font-family:var(--sans); color:var(--ink);
+  border:1px solid var(--border); border-radius:12px;
+  overflow:hidden; background:var(--surface-2);
+}
+.fire-stage{background:#000; line-height:0; overflow:hidden;}
+.fire-stage svg{display:block; width:100%; height:auto;}
+.fire-panel{padding:16px 18px 18px;}
+.fire-row{display:flex; align-items:center; gap:12px; margin-bottom:10px;}
+.fire-row-tabs{gap:2px; margin-bottom:16px;}
+.fire-row label{
+  font-family:var(--mono); font-size:11px; letter-spacing:.12em;
+  text-transform:uppercase; color:var(--ink-muted); min-width:92px;
+}
+.fire-row input[type=range]{flex:1; accent-color:var(--accent);}
+.fire-row output{font-family:var(--mono); font-size:12px; min-width:24px; text-align:right;}
+.fire-tab{
+  font-family:var(--mono); font-size:11px; letter-spacing:.06em;
+  padding:7px 12px; cursor:pointer; color:var(--ink-muted);
+  background:#fff; border:1px solid var(--border);
+}
+.fire-tab:first-child{border-radius:8px 4px 4px 8px;}
+.fire-tab:last-child{border-radius:4px 8px 8px 4px;}
+.fire-tab.is-on{color:var(--accent); background:#fdf1eb; border-color:#f0c4a8;}
+.fire-note{
+  font-size:13px; line-height:1.6; color:var(--ink-muted);
+  margin:14px 0 0; padding-top:14px; border-top:1px solid var(--border);
+}
+.fire-note code{
+  font-family:var(--mono); font-size:12px; background:#f0ede6;
+  border-radius:4px; padding:1px 5px; color:var(--ink);
+}
+</style>
+
+<script>
+(function(){
+  var W = 80, H = 55, NS = "http://www.w3.org/2000/svg";
+  var svg = document.getElementById("fire-svg");
+  if(!svg) return;
+
+  var cw = 320 / W, ch = 220 / H;
+  var rects = [], buf = new Uint8Array(W*H), last = new Int16Array(W*H);
+  for(var i=0;i<W*H;i++) last[i] = -1;
+
+  var frag = document.createDocumentFragment();
+  for(var y=0;y<H;y++){
+    for(var x=0;x<W;x++){
+      var r = document.createElementNS(NS,"rect");
+      r.setAttribute("x", (x*cw).toFixed(2));
+      r.setAttribute("y", (y*ch).toFixed(2));
+      r.setAttribute("width",  (cw+0.4).toFixed(2));
+      r.setAttribute("height", (ch+0.4).toFixed(2));
+      r.setAttribute("fill", "#000");
+      frag.appendChild(r);
+      rects.push(r);
+    }
+  }
+  svg.appendChild(frag);
+
+  /* paleta: 37 stopni, jak w DOOM-ie — czerń, czerwień, pomarańcz, żółć, biel */
+  var STOPS = [[0,0,0],[40,0,0],[160,20,0],[230,110,0],[255,220,60],[255,255,255]];
+  var PAL = [];
+  for(var p=0;p<37;p++){
+    var t = p/36*(STOPS.length-1), k = Math.min(Math.floor(t), STOPS.length-2), f = t-k;
+    var a = STOPS[k], b = STOPS[k+1];
+    PAL.push("rgb("+Math.round(a[0]+(b[0]-a[0])*f)+","
+                   +Math.round(a[1]+(b[1]-a[1])*f)+","
+                   +Math.round(a[2]+(b[2]-a[2])*f)+")");
+  }
+
+  var algo = "doom", cool = 3, wind = 0, running = true;
+
+  var NOTES = {
+    doom: "Wersja z <code>DOOM</code>-a na PlayStation. Piksel <b>kopiuje</b> wartość z pola poniżej i odejmuje losowe zero lub jeden. Boczne rozmycie bierze się wyłącznie z losowego przesunięcia celu — nigdzie nie ma uśredniania.",
+    demo: "Wersja demoscenowa. Piksel bierze <b>średnią</b> z kilku sąsiadów poniżej i odejmuje losowe chłodzenie. Uśrednianie działa jak rozmycie, więc języki są bardziej miękkie i spójne."
+  };
+
+  function setNote(){ document.getElementById("fire-note").innerHTML = NOTES[algo]; }
+  setNote();
+
+  /* dolny rząd = generator; w DOOM-ie stały, w demoscenie losowany */
+  function seedRow(){
+    var b = (H-1)*W;
+    if(algo === "doom"){
+      for(var x=0;x<W;x++) buf[b+x] = 36;
+    } else {
+      for(var x2=0;x2<W;x2++) buf[b+x2] = Math.random() < 0.75 ? 36 : (Math.random()*18|0);
+    }
+  }
+
+  function stepDoom(){
+    for(var y=H-1;y>0;y--){
+      for(var x=0;x<W;x++){
+        var rnd = Math.round(Math.random()*3) & 3;
+        var src = y*W + x;
+        var tx  = x - rnd + 1 + wind;
+        if(tx < 0) tx = 0; else if(tx > W-1) tx = W-1;
+        var dst = (y-1)*W + tx;
+        var v = buf[src] - ((rnd & 1) * (1 + (cool>>2)));
+        buf[dst] = v < 0 ? 0 : v;
+      }
+    }
+  }
+
+  function stepDemo(){
+    for(var y=0;y<H-1;y++){
+      for(var x=0;x<W;x++){
+        var sx = x - wind + ((Math.random()*3|0) - 1);
+        var l = sx-1 < 0 ? 0 : sx-1;
+        var r = sx+1 > W-1 ? W-1 : sx+1;
+        var m = sx < 0 ? 0 : (sx > W-1 ? W-1 : sx);
+        var row  = (y+1)*W;
+        var row2 = (y+2 > H-1 ? H-1 : y+2)*W;
+        var v = (buf[row+l] + buf[row+m] + buf[row+r] + buf[row2+m]) / 4
+                - Math.random()*(cool*0.55);
+        buf[y*W+x] = v < 0 ? 0 : v;
+      }
+    }
+  }
+
+  function paint(){
+    for(var i=0;i<W*H;i++){
+      var c = buf[i]; if(c > 36) c = 36;
+      c = c|0;
+      if(c !== last[i]){ last[i] = c; rects[i].setAttribute("fill", PAL[c]); }
+    }
+  }
+
+  function frame(){
+    if(!running) return;
+    seedRow();
+    if(algo === "doom") stepDoom(); else stepDemo();
+    paint();
+    requestAnimationFrame(frame);
+  }
+
+  var tabs = document.querySelectorAll(".fire-tab");
+  for(var t=0;t<tabs.length;t++){
+    tabs[t].addEventListener("click", function(){
+      for(var j=0;j<tabs.length;j++) tabs[j].classList.remove("is-on");
+      this.classList.add("is-on");
+      algo = this.getAttribute("data-algo");
+      buf.fill(0);
+      setNote();
+    });
+  }
+
+  document.getElementById("fire-cool").addEventListener("input", function(e){
+    cool = +e.target.value;
+    document.getElementById("fire-cool-o").textContent = cool;
+  });
+  document.getElementById("fire-wind").addEventListener("input", function(e){
+    wind = +e.target.value;
+    document.getElementById("fire-wind-o").textContent = wind;
+  });
+
+  /* nie palimy prądu, gdy demo jest poza ekranem */
+  if("IntersectionObserver" in window){
+    new IntersectionObserver(function(entries){
+      running = entries[0].isIntersecting;
+      if(running) requestAnimationFrame(frame);
+    }, {threshold:0.05}).observe(svg);
+  }
+
+  requestAnimationFrame(frame);
+})();
+</script>
+<!-- ===== KONIEC fragmentu do wklejenia w moduł Code ===== -->
+
+<a class="wroc" href="../index.html">← Wróć do wersji bez JavaScriptu</a>
+
+</main>
+</body>
+</html>
